@@ -6,7 +6,7 @@ isPlayerReady = false
 --[[    NOTE: (on player initialization)
 
         The way es_extended spawns player causes the ped to start a little above ground
-        and 'fall down'. Since our camera position is based off of ped position, 
+        and 'fall down'. Since our camera position is based off of ped position,
         if we open the ui too early during player's first login, the camera will be pointing 'too high'.
 
         Unfortunately, I did not find a way to detect when that fall is finished, so I decided
@@ -160,8 +160,8 @@ function GetLoadout()
 end
 
 -- skinchanger/esx_skin replacements
---[[ 
-    Unlike skinchanger, this loads only clothes and does not 
+--[[
+    Unlike skinchanger, this loads only clothes and does not
     re-load other parts of your character (that did not change)
 --]]
 function UpdateClothes(data, updateOld)
@@ -282,29 +282,21 @@ end)
 
 RegisterNetEvent('skinchanger:loadSkin')
 AddEventHandler('skinchanger:loadSkin', function(skin, cb)
-    local newChar = GetDefaultCharacter(skin['sex'] == 0)
+	local newSkin = GetDefaultCharacter(skin.sex)
 
-    -- corrections for changed data format and names
-    local changed = {}
-    changed.chain_1 = 'neckarm_1'
-    changed.chain_2 = 'neckarm_2'
-    changed.watches_1 = 'lefthand_1'
-    changed.watches_2 = 'lefthand_2'
-    changed.bracelets_1 = 'righthand_1'
-    changed.bracelets_2 = 'righthand_2'
+	for key, value in pairs(currentChar) do
+		if newSkin[key] then
+			newSkin[key] = value
+		end
+	end
 
-    for k, v in pairs(skin) do
-        if k ~= 'face' and k ~= 'skin' then
-            if changed[k] == nil then
-                newChar[k] = v
-            else
-                newChar[changed[k]] = v
-            end
-        end
-    end
+	for key, value in pairs(skin) do
+		if newSkin[key] then
+			newSkin[key] = value
+		end
+	end
 
-    oldLoadout = GetLoadout()
-    LoadCharacter(newChar, false, cb)
+	LoadCharacter(newSkin, false, cb)
 end)
 
 AddEventHandler('skinchanger:loadDefaultModel', function(loadMale, cb)
@@ -320,7 +312,7 @@ AddEventHandler('skinchanger:change', function(key, val)
 
             DON'T USE IT.
     ]]
-    
+
     local changed = {}
     changed.chain_1 = 'neckarm_1'
     changed.chain_2 = 'neckarm_2'
@@ -1091,7 +1083,7 @@ function GetComponentsData(id)
                                 end
                             end
                         end
-    
+
                         if not blacklisted then
                             table.insert(result, {
                                 name = label,
