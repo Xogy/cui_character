@@ -295,7 +295,7 @@ AddEventHandler('skinchanger:loadSkin', function(skin, cb)
 			newSkin[key] = value
 		end
 	end
-
+	UpdateClothes(newSkin, true)
 	LoadCharacter(newSkin, false, cb)
 end)
 
