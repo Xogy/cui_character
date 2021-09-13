@@ -13,7 +13,6 @@ client_scripts {
 server_scripts {
     '@mysql-async/lib/MySQL.lua',
     'shared/config.lua',
-    --'@esx_identity/server/main.lua',
     'server/main.lua'
 }
 

@@ -1,17 +1,42 @@
-ESX = nil
+if not Config.StandAlone then
+	if Config.ExtendedMode then
+		TriggerEvent('esx:getSharedObject', function(obj) ESX = obj end)
+	else
+		ESX = exports['es_extended']:getSharedObject()
+	end
+
+	AddEventHandler('esx:setPlayerData', function(key, val, last)
+		if GetInvokingResource() == 'es_extended' then
+			ESX.PlayerData[key] = val
+			if OnPlayerData ~= nil then OnPlayerData(key, val, last) end
+		end
+	end)
+else
+	ESX = nil
+end
+
+previewPed = nil
 isInterfaceOpening = false
 isModelLoaded = false
 
 isPlayerReady = false
 --[[    NOTE: (on player initialization)
+
         The way es_extended spawns player causes the ped to start a little above ground
         and 'fall down'. Since our camera position is based off of ped position,
         if we open the ui too early during player's first login, the camera will be pointing 'too high'.
+
         Unfortunately, I did not find a way to detect when that fall is finished, so I decided
         to black out the screen and wait a few seconds (if the special animation is disabled).
+
         This ensures the player will not see that fall or the model being changed from es_extended default.
 ]] --
 function PreparePlayer()
+	if ESX.GetConfig().Multichar then
+		isPlayerReady = true
+		return
+	end
+
 	if Config.EnterCityAnimation then
 		if not IsScreenFadedOut() then
 			DoScreenFadeOut(0)
@@ -54,14 +79,6 @@ if not Config.ExtendedMode and not Config.StandAlone then
 		PreparePlayer()
 	end)
 else
-	--[[ TODO: Bring this back if spawnmanager ever gets changed
-	AddEventHandler('playerSpawned', function()
-		if not isPlayerReady then
-			DoScreenFadeOut(0)
-		end
-	end)
-	--]]
-
 	Citizen.CreateThread(function()
 		while GetIsLoadingScreenActive() do
 			Citizen.Wait(100)
@@ -88,6 +105,9 @@ local identityLoaded = false
 local preparingSkin = true
 local isPlayerNew = false
 
+local firstCharacter = false
+local newCharacter = false
+
 local currentChar = {}
 local oldChar = {}
 local oldLoadout = {}
@@ -99,13 +119,47 @@ function SetOnDutyStatus(value)
 	isOnDuty = value
 end
 
-if not Config.StandAlone then
-	Citizen.CreateThread(function()
-		while ESX == nil do
-			TriggerEvent('esx:getSharedObject', function(obj) ESX = obj end)
-			Citizen.Wait(0)
+function BeginCharacterPreview()
+	-- Snapshot all changes data (to be reverted if cancelled)
+	for k, v in pairs(currentChar) do
+		oldChar[k] = v
+	end
+
+	local playerHeading = GetEntityHeading(PlayerPedId())
+	previewPed = ClonePed(PlayerPedId(), false, false, true)
+
+	SetEntityInvincible(previewPed, true)
+	FreezePedCameraRotation(previewPed, true)
+	FreezeEntityPosition(previewPed, true)
+	PlayIdleAnimation(previewPed)
+end
+
+function EndCharacterPreview(save)
+	-- This applies (or ignores) changes to current player ped based on value of 'save'
+	if previewPed then
+		if save then
+			local newModelHash = GetHashKey('mp_m_freemode_01')
+			if currentChar.sex == 1 then
+				newModelHash = GetHashKey('mp_f_freemode_01')
+			end
+
+			-- Replace non-preview player model if gender change was accepted
+			if GetEntityModel(PlayerPedId()) ~= newModelHash then
+				LoadModel(newModelHash)
+			end
+
+			ClonePedToTarget(previewPed, PlayerPedId())
+		else
+			-- Revert all changes to data variables
+			for k, v in pairs(oldChar) do
+				currentChar[k] = v
+			end
 		end
-	end)
+
+		ClearAllAnimations(previewPed)
+		DeleteEntity(previewPed)
+		previewPed = nil
+	end
 end
 
 function setVisible(visible)
@@ -137,18 +191,9 @@ end
 
 function GetLoadout()
 	local result = {}
-	if not Config.StandAlone then
-		local dataLoaded = false
-		ESX.TriggerServerCallback('esx:getPlayerData', function(data)
-			if data ~= nil then
-				result = data.loadout
-			end
-			dataLoaded = true
-		end)
 
-		while not dataLoaded do
-			Citizen.Wait(100)
-		end
+	if not Config.StandAlone then
+		result = ESX.GetPlayerData().loadout or {}
 	end
 
 	return result
@@ -159,76 +204,40 @@ end
     Unlike skinchanger, this loads only clothes and does not
     re-load other parts of your character (that did not change)
 --]]
-function UpdateClothes(data, updateOld, skip)
+function UpdateClothes(data)
 	local playerPed = PlayerPedId()
 
-	currentChar.sex = data.sex
-	currentChar.tshirt_1 = data.tshirt_1
-	currentChar.tshirt_2 = data.tshirt_2
-	currentChar.torso_1 = data.torso_1
-	currentChar.torso_2 = data.torso_2
-	currentChar.decals_1 = data.decals_1
-	currentChar.decals_2 = data.decals_2
-	currentChar.arms = data.arms
-	currentChar.arms_2 = data.arms_2
-	currentChar.pants_1 = data.pants_1
-	currentChar.pants_2 = data.pants_2
-	currentChar.shoes_1 = data.shoes_1
-	currentChar.shoes_2 = data.shoes_2
-	currentChar.mask_1 = data.mask_1
-	currentChar.mask_2 = data.mask_2
-	currentChar.bproof_1 = data.bproof_1
-	currentChar.bproof_2 = data.bproof_2
-	currentChar.neckarm_1 = data.chain_1 or data.neckarm_1
-	currentChar.neckarm_2 = data.chain_2 or data.neckarm_2
-	currentChar.helmet_1 = data.helmet_1
-	currentChar.helmet_2 = data.helmet_2
-	currentChar.glasses_1 = data.glasses_1
-	currentChar.glasses_2 = data.glasses_2
-	currentChar.lefthand_1 = data.watches_1 or data.lefthand_1
-	currentChar.lefthand_2 = data.watches_2 or data.lefthand_2
-	currentChar.righthand_1 = data.bracelets_1 or data.righthand_1
-	currentChar.righthand_2 = data.bracelets_2 or data.righthand_2
-	currentChar.bags_1 = data.bags_1
-	currentChar.bags_2 = data.bags_2
-	currentChar.ears_1 = data.ears_1
-	currentChar.ears_2 = data.ears_2
-
-	if updateOld then
-		oldChar.sex = data.sex
-		oldChar.tshirt_1 = data.tshirt_1
-		oldChar.tshirt_2 = data.tshirt_2
-		oldChar.torso_1 = data.torso_1
-		oldChar.torso_2 = data.torso_2
-		oldChar.decals_1 = data.decals_1
-		oldChar.decals_2 = data.decals_2
-		oldChar.arms = data.arms
-		oldChar.arms_2 = data.arms_2
-		oldChar.pants_1 = data.pants_1
-		oldChar.pants_2 = data.pants_2
-		oldChar.shoes_1 = data.shoes_1
-		oldChar.shoes_2 = data.shoes_2
-		oldChar.mask_1 = data.mask_1
-		oldChar.mask_2 = data.mask_2
-		oldChar.bproof_1 = data.bproof_1
-		oldChar.bproof_2 = data.bproof_2
-		oldChar.neckarm_1 = data.chain_1 or data.neckarm_1
-		oldChar.neckarm_2 = data.chain_2 or data.neckarm_2
-		oldChar.helmet_1 = data.helmet_1
-		oldChar.helmet_2 = data.helmet_2
-		oldChar.glasses_1 = data.glasses_1
-		oldChar.glasses_2 = data.glasses_2
-		oldChar.lefthand_1 = data.watches_1 or data.lefthand_1
-		oldChar.lefthand_2 = data.watches_2 or data.lefthand_2
-		oldChar.righthand_1 = data.bracelets_1 or data.righthand_1
-		oldChar.righthand_2 = data.bracelets_2 or data.righthand_2
-		oldChar.bags_1 = data.bags_1
-		oldChar.bags_2 = data.bags_2
-		oldChar.ears_1 = data.ears_1
-		oldChar.ears_2 = data.ears_2
-	end
-
-	if skip then return end
+	currentChar.sex = data.sex or currentChar.sex
+	currentChar.tshirt_1 = data.tshirt_1 or currentChar.tshirt_1
+	currentChar.tshirt_2 = data.tshirt_2 or currentChar.tshirt_2
+	currentChar.torso_1 = data.torso_1 or currentChar.torso_1
+	currentChar.torso_2 = data.torso_2 or currentChar.torso_2
+	currentChar.decals_1 = data.decals_1 or currentChar.decals_1
+	currentChar.decals_2 = data.decals_2 or currentChar.decals_2
+	currentChar.arms = data.arms or currentChar.arms
+	currentChar.arms_2 = data.arms_2 or currentChar.arms_2
+	currentChar.pants_1 = data.pants_1 or currentChar.pants_1
+	currentChar.pants_2 = data.pants_2 or currentChar.pants_2
+	currentChar.shoes_1 = data.shoes_1 or currentChar.shoes_1
+	currentChar.shoes_2 = data.shoes_2 or currentChar.shoes_2
+	currentChar.mask_1 = data.mask_1 or currentChar.mask_1
+	currentChar.mask_2 = data.mask_2 or currentChar.mask_2
+	currentChar.bproof_1 = data.bproof_1 or currentChar.bproof_1
+	currentChar.bproof_2 = data.bproof_2 or currentChar.bproof_2
+	currentChar.neckarm_1 = data.chain_1 or data.neckarm_1 or currentChar.chain_1
+	currentChar.neckarm_2 = data.chain_2 or data.neckarm_2 or currentChar.chain_2
+	currentChar.helmet_1 = data.helmet_1 or currentChar.helmet_1
+	currentChar.helmet_2 = data.helmet_2 or currentChar.helmet_2
+	currentChar.glasses_1 = data.glasses_1 or currentChar.glasses_1
+	currentChar.glasses_2 = data.glasses_2 or currentChar.glasses_2
+	currentChar.lefthand_1 = data.watches_1 or data.lefthand_1 or currentChar.watches_1 or currentChar.lefthand_1
+	currentChar.lefthand_2 = data.watches_2 or data.lefthand_2 or currentChar.watches_2 or currentChar.lefthand_2
+	currentChar.righthand_1 = data.bracelets_1 or data.righthand_1 or currentChar.bracelets_1 or currentChar.righthand_1
+	currentChar.righthand_2 = data.bracelets_2 or data.righthand_2 or currentChar.bracelets_2 or currentChar.righthand_2
+	currentChar.bags_1 = data.bags_1 or currentChar.bags_1
+	currentChar.bags_2 = data.bags_2 or currentChar.bags_2
+	currentChar.ears_1 = data.ears_1 or currentChar.ears_1
+	currentChar.ears_2 = data.ears_2 or currentChar.ears_2
 
 	SetPedComponentVariation(playerPed, 8, currentChar.tshirt_1, currentChar.tshirt_2, 2)
 	SetPedComponentVariation(playerPed, 11, currentChar.torso_1, currentChar.torso_2, 2)
@@ -272,6 +281,17 @@ function UpdateClothes(data, updateOld, skip)
 	end
 end
 
+if ESX.GetConfig().Multichar then
+	RegisterNetEvent('esx_multicharacter:SetupUI')
+	AddEventHandler('esx_multicharacter:SetupUI', function(data)
+		if next(data) == nil or (data.current and data.current.new) then
+			firstCharacter = true
+		else
+			firstCharacter = false
+		end
+	end)
+end
+
 RegisterNetEvent('skinchanger:loadClothes')
 AddEventHandler('skinchanger:loadClothes', function(playerSkin, clothesSkin)
 	UpdateClothes(clothesSkin, false)
@@ -279,7 +299,7 @@ end)
 
 RegisterNetEvent('skinchanger:loadSkin')
 AddEventHandler('skinchanger:loadSkin', function(skin, cb)
-	local newSkin = GetDefaultCharacter(skin.sex)
+	local newSkin = GetDefaultCharacter(skin.sex == 0)
 
 	for key, value in pairs(currentChar) do
 		if newSkin[key] then
@@ -293,20 +313,26 @@ AddEventHandler('skinchanger:loadSkin', function(skin, cb)
 		end
 	end
 
-	UpdateClothes(newSkin, true, true)
-	LoadCharacter(newSkin, false, cb)
+	UpdateClothes(newSkin)
+	LoadCharacter(newSkin, cb)
+end)
+
+-- preload default skin values
+CreateThread(function()
+	currentChar = GetDefaultCharacter(false)
 end)
 
 AddEventHandler('skinchanger:loadDefaultModel', function(loadMale, cb)
 	local defaultChar = GetDefaultCharacter(loadMale)
 	oldLoadout = GetLoadout()
-	LoadCharacter(defaultChar, false, cb)
+	LoadCharacter(defaultChar, cb)
 end)
 
 AddEventHandler('skinchanger:change', function(key, val)
 	--[[
 			IMPORTANT: This is provided only for compatibility reasons.
 			It's VERY inefficient as it reloads entire character for a single change.
+
 			DON'T USE IT.
 	]]
 
@@ -327,7 +353,7 @@ AddEventHandler('skinchanger:change', function(key, val)
 
 		-- TODO: (!) Rewrite this to only load changed part.
 		oldLoadout = GetLoadout()
-		LoadCharacter(currentChar, false, cb)
+		LoadCharacter(currentChar, cb)
 	end
 end)
 
@@ -336,7 +362,22 @@ AddEventHandler('skinchanger:getSkin', function(cb)
 end)
 
 AddEventHandler('skinchanger:modelLoaded', function()
-	-- empty for now, no idea what it's purpose really is
+	if not Config.StandAlone then
+		ESX.SetPlayerData('loadout', oldLoadout)
+		TriggerEvent('esx:restoreLoadout')
+	end
+end)
+
+RegisterNetEvent('esx_skin:openSaveableMenu')
+AddEventHandler('esx_skin:openSaveableMenu', function(submitCb, cancelCb)
+	if ESX.GetConfig().Multichar then
+		ESX.TriggerServerCallback('esx_skin:getPlayerSkin', function(skin)
+			if skin ~= nil then
+				oldChar = skin
+				LoadCharacter(skin, submitCb)
+			end
+		end)
+	end
 end)
 
 AddEventHandler('cui_character:close', function(save)
@@ -346,15 +387,14 @@ AddEventHandler('cui_character:close', function(save)
 
 	-- Saving and discarding changes
 	if save then
-		for k, v in pairs(oldChar) do
-			oldChar[k] = currentChar[k]
-		end
 		TriggerServerEvent('cui_character:save', currentChar)
-	else
-		LoadCharacter(oldChar)
 	end
 
-	-- Release textures
+	EndCharacterPreview(save)
+
+	-- Release character models and ui textures
+	SetModelAsNoLongerNeeded(GetHashKey('mp_m_freemode_01'))
+	SetModelAsNoLongerNeeded(GetHashKey('mp_f_freemode_01'))
 	SetStreamedTextureDictAsNoLongerNeeded('mparrow')
 	SetStreamedTextureDictAsNoLongerNeeded('mpleaderboard')
 	if identityLoaded == true then
@@ -398,16 +438,25 @@ AddEventHandler('cui_character:open', function(tabs, cancelable)
 		Citizen.Wait(100)
 	end
 
-	if not Config.StandAlone then
+	if not Config.StandAlone and not newCharacter then
 		oldLoadout = GetLoadout()
 	end
 
-	-- Request textures
+	-- Request character models and ui textures
+	local maleModelHash = GetHashKey('mp_m_freemode_01')
+	local femaleModelHash = GetHashKey('mp_f_freemode_01')
+	RequestModel(maleModelHash)
+	RequestModel(femaleModelHash)
 	RequestStreamedTextureDict('mparrow')
 	RequestStreamedTextureDict('mpleaderboard')
-	while not HasStreamedTextureDictLoaded('mparrow') or not HasStreamedTextureDictLoaded('mpleaderboard') do
+	while not HasStreamedTextureDictLoaded('mparrow') or
+		not HasStreamedTextureDictLoaded('mpleaderboard') or
+		not HasModelLoaded(maleModelHash) or
+		not HasModelLoaded(femaleModelHash) do
 		Wait(100)
 	end
+
+	BeginCharacterPreview()
 
 	SendNUIMessage({
 		action = 'clearAllTabs'
@@ -454,7 +503,11 @@ AddEventHandler('cui_character:open', function(tabs, cancelable)
 		tab = firstTabName
 	})
 
-	Camera.Activate()
+	if newCharacter then
+		Camera.Activate(500)
+	else
+		Camera.Activate()
+	end
 
 	SendNUIMessage({
 		action = 'refreshViewButtons',
@@ -527,7 +580,43 @@ end)
 if not Config.StandAlone then
 	RegisterNetEvent('esx:playerLoaded')
 	AddEventHandler('esx:playerLoaded', function(xPlayer)
+		ESX.PlayerData = xPlayer
+		ESX.PlayerLoaded = true
+
+		if Config.EnterCityAnimation and ESX.GetConfig().Multichar then
+			if not IsScreenFadedOut() then
+				DoScreenFadeOut(0)
+			end
+
+			while not isModelLoaded do
+				Citizen.Wait(0)
+			end
+
+			SwitchOutPlayer(PlayerPedId(), 0, 1)
+
+			while GetPlayerSwitchState() ~= 5 do
+				Citizen.Wait(0)
+			end
+
+			DoScreenFadeIn(500)
+			while not IsScreenFadedIn() do
+				Citizen.Wait(0)
+			end
+
+			SwitchInPlayer(PlayerPedId())
+
+			while GetPlayerSwitchState() ~= 12 do
+				Citizen.Wait(0)
+			end
+		end
+
 		playerLoaded = true
+	end)
+
+	RegisterNetEvent('esx:onPlayerLogout')
+	AddEventHandler('esx:onPlayerLogout', function()
+		ESX.PlayerLoaded = false
+		ESX.PlayerData = {}
 	end)
 
 	AddEventHandler('esx:onPlayerSpawn', function()
@@ -540,11 +629,9 @@ if not Config.StandAlone then
 				oldLoadout = GetLoadout()
 				ESX.TriggerServerCallback('esx_skin:getPlayerSkin', function(skin)
 					if skin ~= nil then
-						oldChar = skin
 						LoadCharacter(skin)
 					else
-						oldChar = GetDefaultCharacter(true)
-						LoadCharacter(oldChar)
+						LoadCharacter(GetDefaultCharacter(true))
 						isPlayerNew = true
 					end
 					preparingSkin = false
@@ -573,7 +660,6 @@ else
 			Citizen.CreateThread(function()
 				Citizen.Wait(250)
 				TriggerServerEvent('cui_character:requestPlayerData')
-				print("Requested player data")
 			end)
 		end
 	end)
@@ -582,11 +668,9 @@ else
 	AddEventHandler('cui_character:recievePlayerData', function(playerData)
 		isPlayerNew = playerData.newPlayer
 		if not isPlayerNew then
-			oldChar = playerData.skin
 			LoadCharacter(playerData.skin)
 		else
-			oldChar = GetDefaultCharacter(true)
-			LoadCharacter(oldChar)
+			LoadCharacter(GetDefaultCharacter(true))
 		end
 		preparingSkin = false
 		playerLoaded = true
@@ -668,8 +752,10 @@ RegisterNUICallback('updateMakeupType', function(data, cb)
 	--[[
 			NOTE:   This is a pure control variable that does not call any natives.
 					It only modifies which options are going to be visible in the ui.
+
 					Since face paint replaces blusher and eye makeup,
 					we need to save in the database which type the player selected:
+
 					0 - 'None',
 					1 - 'Eye Makeup',
 					2 - 'Face Paint'
@@ -703,23 +789,53 @@ RegisterNUICallback('clearMakeup', function(data, cb)
 	currentChar['makeup_3'] = 255
 	currentChar['makeup_4'] = 255
 
-	local playerPed = PlayerPedId()
-	SetPedHeadOverlay(playerPed, 4, currentChar.makeup_1, currentChar.makeup_2 / 100 + 0.0) -- Eye Makeup
-	SetPedHeadOverlayColor(playerPed, 4, 0, currentChar.makeup_3, currentChar.makeup_4) -- Eye Makeup Color
+	SetPedHeadOverlay(previewPed, 4, currentChar.makeup_1, currentChar.makeup_2 / 100 + 0.0) -- Eye Makeup
+	SetPedHeadOverlayColor(previewPed, 4, 0, currentChar.makeup_3, currentChar.makeup_4) -- Eye Makeup Color
 
 	if data['clearblusher'] then
 		currentChar['blush_1'] = 255
 		currentChar['blush_3'] = 0
-		SetPedHeadOverlay(playerPed, 5, currentChar.blush_1, currentChar.blush_2 / 100 + 0.0) -- Blusher
-		SetPedHeadOverlayColor(playerPed, 5, 2, currentChar.blush_3, 255) -- Blusher Color
+		SetPedHeadOverlay(previewPed, 5, currentChar.blush_1, currentChar.blush_2 / 100 + 0.0) -- Blusher
+		SetPedHeadOverlayColor(previewPed, 5, 2, currentChar.blush_3, 255) -- Blusher Color
 	end
 end)
 
 RegisterNUICallback('updateGender', function(data, cb)
-	local value = tonumber(data['value'])
-	ClearAllAnimations()
-	LoadCharacter(GetDefaultCharacter(value == 0), true)
+	currentChar.sex = tonumber(data['value'])
+	local modelHash = nil
+	local isMale = true
+	if currentChar.sex == 0 then
+		modelHash = GetHashKey('mp_m_freemode_01')
+	elseif currentChar.sex == 1 then
+		isMale = false
+		modelHash = GetHashKey('mp_f_freemode_01')
+	else
+		return
+	end
+
+	-- NOTE: There seems to be no native for model change that preserves existing coords
+	local previewCoords = GetEntityCoords(previewPed)
+	DeleteEntity(previewPed)
+	previewPed = CreatePed(4, modelHash, 397.92, -1004.4, -99.0, false, true)
+	local defaultChar = GetDefaultCharacter(isMale)
+	ApplySkinToPed(previewPed, defaultChar)
+	for k, v in pairs(defaultChar) do
+		currentChar[k] = v
+	end
+
 	ResetAllTabs()
+
+	local playerCoords = GetEntityCoords(PlayerPedId())
+	for height = playerCoords.z, 1000 do
+		SetPedCoordsKeepVehicle(previewPed, previewCoords.x, previewCoords.y, height + 0.0)
+		local foundGround, zPos = GetGroundZFor_3dCoord(previewCoords.x, previewCoords.y, height + 0.0)
+		if foundGround then
+			SetPedCoordsKeepVehicle(previewPed, previewCoords.x, previewCoords.y, zPos)
+			break
+		end
+	end
+
+	PlayIdleAnimation(previewPed)
 end)
 
 RegisterNUICallback('updateHeadBlend', function(data, cb)
@@ -730,8 +846,7 @@ RegisterNUICallback('updateHeadBlend', function(data, cb)
 	local weightFace = currentChar.face_md_weight / 100 + 0.0
 	local weightSkin = currentChar.skin_md_weight / 100 + 0.0
 
-	local playerPed = PlayerPedId()
-	SetPedHeadBlendData(playerPed, currentChar.mom, currentChar.dad, 0, currentChar.mom, currentChar.dad, 0, weightFace, weightSkin, 0.0, false)
+	SetPedHeadBlendData(previewPed, currentChar.mom, currentChar.dad, 0, currentChar.mom, currentChar.dad, 0, weightFace, weightSkin, 0.0, false)
 end)
 
 RegisterNUICallback('updateFaceFeature', function(data, cb)
@@ -740,16 +855,14 @@ RegisterNUICallback('updateFaceFeature', function(data, cb)
 	local index = tonumber(data['index'])
 	currentChar[key] = value
 
-	local playerPed = PlayerPedId()
-	SetPedFaceFeature(playerPed, index, (currentChar[key] / 100) + 0.0)
+	SetPedFaceFeature(previewPed, index, (currentChar[key] / 100) + 0.0)
 end)
 
 RegisterNUICallback('updateEyeColor', function(data, cb)
 	local value = tonumber(data['value'])
 	currentChar['eye_color'] = value
 
-	local playerPed = PlayerPedId()
-	SetPedEyeColor(playerPed, currentChar.eye_color)
+	SetPedEyeColor(previewPed, currentChar.eye_color)
 end)
 
 RegisterNUICallback('updateHairColor', function(data, cb)
@@ -758,11 +871,10 @@ RegisterNUICallback('updateHairColor', function(data, cb)
 	local highlight = data['highlight']
 	currentChar[key] = value
 
-	local playerPed = PlayerPedId()
 	if highlight then
-		SetPedHairColor(playerPed, currentChar['hair_color_1'], currentChar[key])
+		SetPedHairColor(previewPed, currentChar['hair_color_1'], currentChar[key])
 	else
-		SetPedHairColor(playerPed, currentChar[key], currentChar['hair_color_2'])
+		SetPedHairColor(previewPed, currentChar[key], currentChar['hair_color_2'])
 	end
 end)
 
@@ -774,11 +886,10 @@ RegisterNUICallback('updateHeadOverlay', function(data, cb)
 	local isOpacity = (data['isOpacity'])
 	currentChar[key] = value
 
-	local playerPed = PlayerPedId()
 	if isOpacity then
-		SetPedHeadOverlay(playerPed, index, currentChar[keyPaired], currentChar[key] / 100 + 0.0)
+		SetPedHeadOverlay(previewPed, index, currentChar[keyPaired], currentChar[key] / 100 + 0.0)
 	else
-		SetPedHeadOverlay(playerPed, index, currentChar[key], currentChar[keyPaired] / 100 + 0.0)
+		SetPedHeadOverlay(previewPed, index, currentChar[key], currentChar[keyPaired] / 100 + 0.0)
 	end
 end)
 
@@ -794,15 +905,14 @@ RegisterNUICallback('updateHeadOverlayExtra', function(data, cb)
 
 	currentChar[key] = value
 
-	local playerPed = PlayerPedId()
 	if isOpacity then
 		currentChar[keyExtra] = value
-		SetPedHeadOverlay(playerPed, index, currentChar[keyPaired], currentChar[key] / 100 + 0.0)
-		SetPedHeadOverlay(playerPed, indexExtra, valueExtra, currentChar[key] / 100 + 0.0)
+		SetPedHeadOverlay(previewPed, index, currentChar[keyPaired], currentChar[key] / 100 + 0.0)
+		SetPedHeadOverlay(previewPed, indexExtra, valueExtra, currentChar[key] / 100 + 0.0)
 	else
 		currentChar[keyExtra] = valueExtra
-		SetPedHeadOverlay(playerPed, index, currentChar[key], currentChar[keyPaired] / 100 + 0.0)
-		SetPedHeadOverlay(playerPed, indexExtra, currentChar[keyExtra], currentChar[keyPaired] / 100 + 0.0)
+		SetPedHeadOverlay(previewPed, index, currentChar[key], currentChar[keyPaired] / 100 + 0.0)
+		SetPedHeadOverlay(previewPed, indexExtra, currentChar[keyExtra], currentChar[keyPaired] / 100 + 0.0)
 	end
 end)
 
@@ -813,8 +923,7 @@ RegisterNUICallback('updateOverlayColor', function(data, cb)
 	local colortype = tonumber(data['colortype'])
 	currentChar[key] = value
 
-	local playerPed = PlayerPedId()
-	SetPedHeadOverlayColor(playerPed, index, colortype, currentChar[key])
+	SetPedHeadOverlayColor(previewPed, index, colortype, currentChar[key])
 end)
 
 RegisterNUICallback('updateComponent', function(data, cb)
@@ -826,8 +935,7 @@ RegisterNUICallback('updateComponent', function(data, cb)
 	currentChar[drawableKey] = drawableValue
 	currentChar[textureKey] = textureValue
 
-	local playerPed = PlayerPedId()
-	SetPedComponentVariation(playerPed, index, currentChar[drawableKey], currentChar[textureKey], 2)
+	SetPedComponentVariation(previewPed, index, currentChar[drawableKey], currentChar[textureKey], 2)
 end)
 
 RegisterNUICallback('updateApparelComponent', function(data, cb)
@@ -837,12 +945,11 @@ RegisterNUICallback('updateApparelComponent', function(data, cb)
 	currentChar[drawableKey] = tonumber(data['drwval'])
 	currentChar[textureKey] = tonumber(data['texval'])
 
-	local playerPed = PlayerPedId()
-	SetPedComponentVariation(playerPed, component, currentChar[drawableKey], currentChar[textureKey], 2)
+	SetPedComponentVariation(previewPed, component, currentChar[drawableKey], currentChar[textureKey], 2)
 
 	-- Some clothes have 'forced components' that change torso and other parts.
 	-- adapted from: https://gist.github.com/root-cause/3b80234367b0c856d60bf5cb4b826f86
-	local hash = GetHashNameForComponent(playerPed, component, currentChar[drawableKey], currentChar[textureKey])
+	local hash = GetHashNameForComponent(previewPed, component, currentChar[drawableKey], currentChar[textureKey])
 	--print('main component hash ' .. hash)
 	local fcDrawable, fcTexture, fcType = -1, -1, -1
 	local fcCount = GetShopPedApparelForcedComponentCount(hash) - 1
@@ -862,26 +969,26 @@ RegisterNUICallback('updateApparelComponent', function(data, cb)
 			end
 
 			-- Apply component to ped, save it in current character data
-			if IsPedComponentVariationValid(playerPed, fcType, fcDrawable, fcTexture) then
+			if IsPedComponentVariationValid(previewPed, fcType, fcDrawable, fcTexture) then
 				currentChar['arms'] = fcDrawable
 				currentChar['arms_2'] = fcTexture
-				SetPedComponentVariation(playerPed, fcType, fcDrawable, fcTexture, 2)
+				SetPedComponentVariation(previewPed, fcType, fcDrawable, fcTexture, 2)
 			end
 		end
 	end
 
 	-- Forced components do not pick proper torso for 'None' variant, need manual correction
-	if GetEntityModel(playerPed) == GetHashKey('mp_f_freemode_01') then
-		if (GetPedDrawableVariation(playerPed, 11) == 15) and (GetPedTextureVariation(playerPed, 11) == 16) then
+	if GetEntityModel(previewPed) == GetHashKey('mp_f_freemode_01') then
+		if (GetPedDrawableVariation(previewPed, 11) == 15) and (GetPedTextureVariation(previewPed, 11) == 16) then
 			currentChar['arms'] = 15
 			currentChar['arms_2'] = 0
-			SetPedComponentVariation(playerPed, 3, 15, 0, 2);
+			SetPedComponentVariation(previewPed, 3, 15, 0, 2);
 		end
-	elseif GetEntityModel(playerPed) == GetHashKey('mp_m_freemode_01') then
-		if (GetPedDrawableVariation(playerPed, 11) == 15) and (GetPedTextureVariation(playerPed, 11) == 0) then
+	elseif GetEntityModel(previewPed) == GetHashKey('mp_m_freemode_01') then
+		if (GetPedDrawableVariation(previewPed, 11) == 15) and (GetPedTextureVariation(previewPed, 11) == 0) then
 			currentChar['arms'] = 15
 			currentChar['arms_2'] = 0
-			SetPedComponentVariation(playerPed, 3, 15, 0, 2);
+			SetPedComponentVariation(previewPed, 3, 15, 0, 2);
 		end
 	end
 end)
@@ -893,12 +1000,10 @@ RegisterNUICallback('updateApparelProp', function(data, cb)
 	currentChar[drawableKey] = tonumber(data['drwval'])
 	currentChar[textureKey] = tonumber(data['texval'])
 
-	local playerPed = PlayerPedId()
-
 	if currentChar[drawableKey] == -1 then
-		ClearPedProp(playerPed, prop)
+		ClearPedProp(previewPed, prop)
 	else
-		SetPedPropIndex(playerPed, prop, currentChar[drawableKey], currentChar[textureKey], false)
+		SetPedPropIndex(previewPed, prop, currentChar[drawableKey], currentChar[textureKey], false)
 	end
 end)
 
@@ -1042,24 +1147,23 @@ end
 function GetComponentsData(id)
 	local result = {}
 
-	local playerPed = PlayerPedId()
 	local componentBlacklist = nil
 
 	if blacklist ~= nil then
-		if GetEntityModel(playerPed) == GetHashKey('mp_m_freemode_01') then
+		if GetEntityModel(previewPed) == GetHashKey('mp_m_freemode_01') then
 			componentBlacklist = blacklist.components.male
-		elseif GetEntityModel(playerPed) == GetHashKey('mp_f_freemode_01') then
+		elseif GetEntityModel(previewPed) == GetHashKey('mp_f_freemode_01') then
 			componentBlacklist = blacklist.components.female
 		end
 	end
 
-	local drawableCount = GetNumberOfPedDrawableVariations(playerPed, id) - 1
+	local drawableCount = GetNumberOfPedDrawableVariations(previewPed, id) - 1
 
 	for drawable = 0, drawableCount do
-		local textureCount = GetNumberOfPedTextureVariations(playerPed, id, drawable) - 1
+		local textureCount = GetNumberOfPedTextureVariations(previewPed, id, drawable) - 1
 
 		for texture = 0, textureCount do
-			local hash = GetHashNameForComponent(playerPed, id, drawable, texture)
+			local hash = GetHashNameForComponent(previewPed, id, drawable, texture)
 
 			if hash ~= 0 then
 				local component, drawable, texture, gxt = GetComponentDataFromHash(hash)
@@ -1099,24 +1203,23 @@ end
 function GetPropsData(id)
 	local result = {}
 
-	local playerPed = PlayerPedId()
 	local propBlacklist = nil
 
 	if blacklist ~= nil then
-		if GetEntityModel(playerPed) == GetHashKey('mp_m_freemode_01') then
+		if GetEntityModel(previewPed) == GetHashKey('mp_m_freemode_01') then
 			propBlacklist = blacklist.props.male
-		elseif GetEntityModel(playerPed) == GetHashKey('mp_f_freemode_01') then
+		elseif GetEntityModel(previewPed) == GetHashKey('mp_f_freemode_01') then
 			propBlacklist = blacklist.props.female
 		end
 	end
 
-	local drawableCount = GetNumberOfPedPropDrawableVariations(playerPed, id) - 1
+	local drawableCount = GetNumberOfPedPropDrawableVariations(previewPed, id) - 1
 
 	for drawable = 0, drawableCount do
-		local textureCount = GetNumberOfPedPropTextureVariations(playerPed, id, drawable) - 1
+		local textureCount = GetNumberOfPedPropTextureVariations(previewPed, id, drawable) - 1
 
 		for texture = 0, textureCount do
-			local hash = GetHashNameForProp(playerPed, id, drawable, texture)
+			local hash = GetHashNameForProp(previewPed, id, drawable, texture)
 
 			if hash ~= 0 then
 				local prop, drawable, texture, gxt = GetPropDataFromHash(hash)
@@ -1183,7 +1286,14 @@ function GetClothesData()
 	result.glasses = GetPropsData(1)
 	result.lefthands = GetPropsData(6)
 	result.righthands = GetPropsData(7)
+	--[[
+			unused components:
+			face (0), torso/arms (3), parachute/bag (5), bulletproof vest (9), badges (10)
 
+			unused props:
+			mouth (3), left hand (4), righ thand (5), left wrist (6), right wrist (7), hip (8),
+			left foot(9), right foot (10)
+	]]
 	return result
 end
 
@@ -1305,50 +1415,42 @@ function GetDefaultCharacter(isMale)
 	return result
 end
 
-function LoadModel(isMale, playIdleWhenLoaded)
+function LoadModel(hash)
 	isModelLoaded = false
-
 	local playerPed = PlayerPedId()
-	local characterModel = GetHashKey('mp_f_freemode_01')
-	if isMale then
-		characterModel = GetHashKey('mp_m_freemode_01')
-	end
 
-	if GetEntityModel(playerPed) == characterModel then
-		PlayIdleAnimation(isMale)
-		FreezePedCameraRotation(playerPed, false)
+	if GetEntityModel(playerPed) == hash then
 		isModelLoaded = true
 		return
 	end
 
 	SetEntityInvincible(playerPed, true)
-	if IsModelInCdimage(characterModel) and IsModelValid(characterModel) then
-		RequestModel(characterModel)
-		while not HasModelLoaded(characterModel) do
+
+	if IsModelInCdimage(hash) and IsModelValid(hash) then
+		RequestModel(hash)
+		while not HasModelLoaded(hash) do
 			Citizen.Wait(0)
 		end
-		SetPlayerModel(PlayerId(), characterModel)
-		SetModelAsNoLongerNeeded(characterModel)
+		SetPlayerModel(PlayerId(), hash)
 		FreezePedCameraRotation(playerPed, true)
 	end
 	SetEntityInvincible(playerPed, false)
 
-	if playIdleWhenLoaded then
-		PlayIdleAnimation(isMale)
-	end
-
 	isModelLoaded = true
+	if not Config.StandAlone then
+		TriggerEvent('skinchanger:modelLoaded')
+	end
 end
 
-function PlayIdleAnimation(isMale)
-	if isMale == nil then
-		isMale = (currentChar.sex == 0)
-	end
+function PlayIdleAnimation(ped)
+	local animDict = nil
 
-	local animDict = 'anim@heists@heist_corona@team_idles@female_a'
-
-	if isMale then
+	if GetEntityModel(ped) == GetHashKey('mp_m_freemode_01') then
 		animDict = 'anim@heists@heist_corona@team_idles@male_c'
+	elseif GetEntityModel(ped) == GetHashKey('mp_f_freemode_01') then
+		animDict = 'anim@heists@heist_corona@team_idles@female_a'
+	else
+		return
 	end
 
 	while not HasAnimDictLoaded(animDict) do
@@ -1356,13 +1458,12 @@ function PlayIdleAnimation(isMale)
 		Wait(100)
 	end
 
-	local playerPed = PlayerPedId()
-	ClearPedTasksImmediately(playerPed)
-	TaskPlayAnim(playerPed, animDict, 'idle', 1.0, 1.0, -1, 1, 1, 0, 0, 0)
+	ClearPedTasksImmediately(ped)
+	TaskPlayAnim(ped, animDict, 'idle', 1.0, 1.0, -1, 1, 1, 0, 0, 0)
 end
 
-function ClearAllAnimations()
-	ClearPedTasksImmediately(PlayerPedId())
+function ClearAllAnimations(ped)
+	ClearPedTasksImmediately(ped)
 
 	if HasAnimDictLoaded('anim@heists@heist_corona@team_idles@female_a') then
 		RemoveAnimDict('anim@heists@heist_corona@team_idles@female_a')
@@ -1374,123 +1475,122 @@ function ClearAllAnimations()
 end
 
 -- Loading character data
-function LoadCharacter(data, playIdleWhenLoaded, callback)
+function ApplySkinToPed(ped, skin)
+	-- Face Blend
+	local weightFace = skin.face_md_weight / 100 + 0.0
+	local weightSkin = skin.skin_md_weight / 100 + 0.0
+	SetPedHeadBlendData(ped, skin.mom, skin.dad, 0, skin.mom, skin.dad, 0, weightFace, weightSkin, 0.0, false)
+
+	-- Facial Features
+	SetPedFaceFeature(ped, 0, (skin.nose_1 / 100) + 0.0) -- Nose Width
+	SetPedFaceFeature(ped, 1, (skin.nose_2 / 100) + 0.0) -- Nose Peak Height
+	SetPedFaceFeature(ped, 2, (skin.nose_3 / 100) + 0.0) -- Nose Peak Length
+	SetPedFaceFeature(ped, 3, (skin.nose_4 / 100) + 0.0) -- Nose Bone Height
+	SetPedFaceFeature(ped, 4, (skin.nose_5 / 100) + 0.0) -- Nose Peak Lowering
+	SetPedFaceFeature(ped, 5, (skin.nose_6 / 100) + 0.0) -- Nose Bone Twist
+	SetPedFaceFeature(ped, 6, (skin.eyebrows_5 / 100) + 0.0) -- Eyebrow height
+	SetPedFaceFeature(ped, 7, (skin.eyebrows_6 / 100) + 0.0) -- Eyebrow depth
+	SetPedFaceFeature(ped, 8, (skin.cheeks_1 / 100) + 0.0) -- Cheekbones Height
+	SetPedFaceFeature(ped, 9, (skin.cheeks_2 / 100) + 0.0) -- Cheekbones Width
+	SetPedFaceFeature(ped, 10, (skin.cheeks_3 / 100) + 0.0) -- Cheeks Width
+	SetPedFaceFeature(ped, 11, (skin.eye_squint / 100) + 0.0) -- Eyes squint
+	SetPedFaceFeature(ped, 12, (skin.lip_thickness / 100) + 0.0) -- Lip Fullness
+	SetPedFaceFeature(ped, 13, (skin.jaw_1 / 100) + 0.0) -- Jaw Bone Width
+	SetPedFaceFeature(ped, 14, (skin.jaw_2 / 100) + 0.0) -- Jaw Bone Length
+	SetPedFaceFeature(ped, 15, (skin.chin_1 / 100) + 0.0) -- Chin Height
+	SetPedFaceFeature(ped, 16, (skin.chin_2 / 100) + 0.0) -- Chin Length
+	SetPedFaceFeature(ped, 17, (skin.chin_3 / 100) + 0.0) -- Chin Width
+	SetPedFaceFeature(ped, 18, (skin.chin_4 / 100) + 0.0) -- Chin Hole Size
+	SetPedFaceFeature(ped, 19, (skin.neck_thickness / 100) + 0.0) -- Neck Thickness
+
+	-- Appearance
+	SetPedComponentVariation(ped, 2, skin.hair_1, skin.hair_2, 2) -- Hair Style
+	SetPedHairColor(ped, skin.hair_color_1, skin.hair_color_2) -- Hair Color
+	SetPedHeadOverlay(ped, 2, skin.eyebrows_1, skin.eyebrows_2 / 100 + 0.0) -- Eyebrow Style + Opacity
+	SetPedHeadOverlayColor(ped, 2, 1, skin.eyebrows_3, skin.eyebrows_4) -- Eyebrow Color
+	SetPedHeadOverlay(ped, 1, skin.beard_1, skin.beard_2 / 100 + 0.0) -- Beard Style + Opacity
+	SetPedHeadOverlayColor(ped, 1, 1, skin.beard_3, skin.beard_4) -- Beard Color
+
+	SetPedHeadOverlay(ped, 0, skin.blemishes_1, skin.blemishes_2 / 100 + 0.0) -- Skin blemishes + Opacity
+	SetPedHeadOverlay(ped, 12, skin.bodyb_3, skin.bodyb_4 / 100 + 0.0) -- Skin blemishes body effect + Opacity
+
+	SetPedHeadOverlay(ped, 11, skin.bodyb_1, skin.bodyb_2 / 100 + 0.0) -- Body Blemishes + Opacity
+
+	SetPedHeadOverlay(ped, 3, skin.age_1, skin.age_2 / 100 + 0.0) -- Age + opacity
+	SetPedHeadOverlay(ped, 6, skin.complexion_1, skin.complexion_2 / 100 + 0.0) -- Complexion + Opacity
+	SetPedHeadOverlay(ped, 9, skin.moles_1, skin.moles_2 / 100 + 0.0) -- Moles/Freckles + Opacity
+	SetPedHeadOverlay(ped, 7, skin.sun_1, skin.sun_2 / 100 + 0.0) -- Sun Damage + Opacity
+	SetPedEyeColor(ped, skin.eye_color) -- Eyes Color
+	SetPedHeadOverlay(ped, 4, skin.makeup_1, skin.makeup_2 / 100 + 0.0) -- Makeup + Opacity
+	SetPedHeadOverlayColor(ped, 4, 0, skin.makeup_3, skin.makeup_4) -- Makeup Color
+	SetPedHeadOverlay(ped, 5, skin.blush_1, skin.blush_2 / 100 + 0.0) -- Blush + Opacity
+	SetPedHeadOverlayColor(ped, 5, 2, skin.blush_3) -- Blush Color
+	SetPedHeadOverlay(ped, 8, skin.lipstick_1, skin.lipstick_2 / 100 + 0.0) -- Lipstick + Opacity
+	SetPedHeadOverlayColor(ped, 8, 2, skin.lipstick_3, skin.lipstick_4) -- Lipstick Color
+	SetPedHeadOverlay(ped, 10, skin.chest_1, skin.chest_2 / 100 + 0.0) -- Chest Hair + Opacity
+	SetPedHeadOverlayColor(ped, 10, 1, skin.chest_3, skin.chest_4) -- Chest Hair Color
+
+	-- Clothing and Accessories
+	SetPedComponentVariation(ped, 8, skin.tshirt_1, skin.tshirt_2, 2) -- Undershirts
+	SetPedComponentVariation(ped, 11, skin.torso_1, skin.torso_2, 2) -- Jackets
+	SetPedComponentVariation(ped, 3, skin.arms, skin.arms_2, 2) -- Torsos
+	SetPedComponentVariation(ped, 10, skin.decals_1, skin.decals_2, 2) -- Decals
+	SetPedComponentVariation(ped, 4, skin.pants_1, skin.pants_2, 2) -- Legs
+	SetPedComponentVariation(ped, 6, skin.shoes_1, skin.shoes_2, 2) -- Shoes
+	SetPedComponentVariation(ped, 1, skin.mask_1, skin.mask_2, 2) -- Masks
+	SetPedComponentVariation(ped, 9, skin.bproof_1, skin.bproof_2, 2) -- Vests
+	SetPedComponentVariation(ped, 7, skin.neckarm_1, skin.neckarm_2, 2) -- Necklaces/Chains/Ties/Suspenders
+	SetPedComponentVariation(ped, 5, skin.bags_1, skin.bags_2, 2) -- Bags
+
+	if skin.helmet_1 == -1 then
+		ClearPedProp(ped, 0)
+	else
+		SetPedPropIndex(ped, 0, skin.helmet_1, skin.helmet_2, 2) -- Hats
+	end
+
+	if skin.glasses_1 == -1 then
+		ClearPedProp(ped, 1)
+	else
+		SetPedPropIndex(ped, 1, skin.glasses_1, skin.glasses_2, 2) -- Glasses
+	end
+
+	if skin.lefthand_1 == -1 then
+		ClearPedProp(ped, 6)
+	else
+		SetPedPropIndex(ped, 6, skin.lefthand_1, skin.lefthand_2, 2) -- Left Hand Accessory
+	end
+
+	if skin.righthand_1 == -1 then
+		ClearPedProp(ped, 7)
+	else
+		SetPedPropIndex(ped, 7, skin.righthand_1, skin.righthand_2, 2) -- Right Hand Accessory
+	end
+
+	if skin.ears_1 == -1 then
+		ClearPedProp(ped, 2)
+	else
+		SetPedPropIndex(ped, 2, skin.ears_1, skin.ears_2, 2) -- Ear Accessory
+	end
+end
+
+function LoadCharacter(data, callback)
 	for k, v in pairs(data) do
 		currentChar[k] = v
 	end
 
-	local isMale = false
-	if data.sex ~= 1 then
-		isMale = true
+	local modelHash = nil
+	if data.sex == 0 then
+		modelHash = GetHashKey('mp_m_freemode_01')
+	else
+		modelHash = GetHashKey('mp_f_freemode_01')
 	end
 
-	LoadModel(isMale, playIdleWhenLoaded)
+	LoadModel(modelHash)
 
-	--TODO: Possibly pull these out to separate functions
 	local playerPed = PlayerPedId()
+	ApplySkinToPed(playerPed, data)
 
-	-- Face Blend
-	local weightFace = data.face_md_weight / 100 + 0.0
-	local weightSkin = data.skin_md_weight / 100 + 0.0
-	SetPedHeadBlendData(playerPed, data.mom, data.dad, 0, data.mom, data.dad, 0, weightFace, weightSkin, 0.0, false)
-
-	-- Facial Features
-	SetPedFaceFeature(playerPed, 0, (data.nose_1 / 100) + 0.0) -- Nose Width
-	SetPedFaceFeature(playerPed, 1, (data.nose_2 / 100) + 0.0) -- Nose Peak Height
-	SetPedFaceFeature(playerPed, 2, (data.nose_3 / 100) + 0.0) -- Nose Peak Length
-	SetPedFaceFeature(playerPed, 3, (data.nose_4 / 100) + 0.0) -- Nose Bone Height
-	SetPedFaceFeature(playerPed, 4, (data.nose_5 / 100) + 0.0) -- Nose Peak Lowering
-	SetPedFaceFeature(playerPed, 5, (data.nose_6 / 100) + 0.0) -- Nose Bone Twist
-	SetPedFaceFeature(playerPed, 6, (data.eyebrows_5 / 100) + 0.0) -- Eyebrow height
-	SetPedFaceFeature(playerPed, 7, (data.eyebrows_6 / 100) + 0.0) -- Eyebrow depth
-	SetPedFaceFeature(playerPed, 8, (data.cheeks_1 / 100) + 0.0) -- Cheekbones Height
-	SetPedFaceFeature(playerPed, 9, (data.cheeks_2 / 100) + 0.0) -- Cheekbones Width
-	SetPedFaceFeature(playerPed, 10, (data.cheeks_3 / 100) + 0.0) -- Cheeks Width
-	SetPedFaceFeature(playerPed, 11, (data.eye_squint / 100) + 0.0) -- Eyes squint
-	SetPedFaceFeature(playerPed, 12, (data.lip_thickness / 100) + 0.0) -- Lip Fullness
-	SetPedFaceFeature(playerPed, 13, (data.jaw_1 / 100) + 0.0) -- Jaw Bone Width
-	SetPedFaceFeature(playerPed, 14, (data.jaw_2 / 100) + 0.0) -- Jaw Bone Length
-	SetPedFaceFeature(playerPed, 15, (data.chin_1 / 100) + 0.0) -- Chin Height
-	SetPedFaceFeature(playerPed, 16, (data.chin_2 / 100) + 0.0) -- Chin Length
-	SetPedFaceFeature(playerPed, 17, (data.chin_3 / 100) + 0.0) -- Chin Width
-	SetPedFaceFeature(playerPed, 18, (data.chin_4 / 100) + 0.0) -- Chin Hole Size
-	SetPedFaceFeature(playerPed, 19, (data.neck_thickness / 100) + 0.0) -- Neck Thickness
-
-	-- Appearance
-	SetPedComponentVariation(playerPed, 2, data.hair_1, data.hair_2, 2) -- Hair Style
-	SetPedHairColor(playerPed, data.hair_color_1, data.hair_color_2) -- Hair Color
-	SetPedHeadOverlay(playerPed, 2, data.eyebrows_1, data.eyebrows_2 / 100 + 0.0) -- Eyebrow Style + Opacity
-	SetPedHeadOverlayColor(playerPed, 2, 1, data.eyebrows_3, data.eyebrows_4) -- Eyebrow Color
-	SetPedHeadOverlay(playerPed, 1, data.beard_1, data.beard_2 / 100 + 0.0) -- Beard Style + Opacity
-	SetPedHeadOverlayColor(playerPed, 1, 1, data.beard_3, data.beard_4) -- Beard Color
-
-	SetPedHeadOverlay(playerPed, 0, data.blemishes_1, data.blemishes_2 / 100 + 0.0) -- Skin blemishes + Opacity
-	SetPedHeadOverlay(playerPed, 12, data.bodyb_3, data.bodyb_4 / 100 + 0.0) -- Skin blemishes body effect + Opacity
-
-	SetPedHeadOverlay(playerPed, 11, data.bodyb_1, data.bodyb_2 / 100 + 0.0) -- Body Blemishes + Opacity
-
-	SetPedHeadOverlay(playerPed, 3, data.age_1, data.age_2 / 100 + 0.0) -- Age + opacity
-	SetPedHeadOverlay(playerPed, 6, data.complexion_1, data.complexion_2 / 100 + 0.0) -- Complexion + Opacity
-	SetPedHeadOverlay(playerPed, 9, data.moles_1, data.moles_2 / 100 + 0.0) -- Moles/Freckles + Opacity
-	SetPedHeadOverlay(playerPed, 7, data.sun_1, data.sun_2 / 100 + 0.0) -- Sun Damage + Opacity
-	SetPedEyeColor(playerPed, data.eye_color) -- Eyes Color
-	SetPedHeadOverlay(playerPed, 4, data.makeup_1, data.makeup_2 / 100 + 0.0) -- Makeup + Opacity
-	SetPedHeadOverlayColor(playerPed, 4, 0, data.makeup_3, data.makeup_4) -- Makeup Color
-	SetPedHeadOverlay(playerPed, 5, data.blush_1, data.blush_2 / 100 + 0.0) -- Blush + Opacity
-	SetPedHeadOverlayColor(playerPed, 5, 2, data.blush_3) -- Blush Color
-	SetPedHeadOverlay(playerPed, 8, data.lipstick_1, data.lipstick_2 / 100 + 0.0) -- Lipstick + Opacity
-	SetPedHeadOverlayColor(playerPed, 8, 2, data.lipstick_3, data.lipstick_4) -- Lipstick Color
-	SetPedHeadOverlay(playerPed, 10, data.chest_1, data.chest_2 / 100 + 0.0) -- Chest Hair + Opacity
-	SetPedHeadOverlayColor(playerPed, 10, 1, data.chest_3, data.chest_4) -- Chest Hair Color
-
-	-- Clothing and Accessories
-	SetPedComponentVariation(playerPed, 8, data.tshirt_1, data.tshirt_2, 2) -- Undershirts
-	SetPedComponentVariation(playerPed, 11, data.torso_1, data.torso_2, 2) -- Jackets
-	SetPedComponentVariation(playerPed, 3, data.arms, data.arms_2, 2) -- Torsos
-	SetPedComponentVariation(playerPed, 10, data.decals_1, data.decals_2, 2) -- Decals
-	SetPedComponentVariation(playerPed, 4, data.pants_1, data.pants_2, 2) -- Legs
-	SetPedComponentVariation(playerPed, 6, data.shoes_1, data.shoes_2, 2) -- Shoes
-	SetPedComponentVariation(playerPed, 1, data.mask_1, data.mask_2, 2) -- Masks
-	SetPedComponentVariation(playerPed, 9, data.bproof_1, data.bproof_2, 2) -- Vests
-	SetPedComponentVariation(playerPed, 7, data.neckarm_1, data.neckarm_2, 2) -- Necklaces/Chains/Ties/Suspenders
-	SetPedComponentVariation(playerPed, 5, data.bags_1, data.bags_2, 2) -- Bags
-
-	if data.helmet_1 == -1 then
-		ClearPedProp(playerPed, 0)
-	else
-		SetPedPropIndex(playerPed, 0, data.helmet_1, data.helmet_2, 2) -- Hats
-	end
-
-	if data.glasses_1 == -1 then
-		ClearPedProp(playerPed, 1)
-	else
-		SetPedPropIndex(playerPed, 1, data.glasses_1, data.glasses_2, 2) -- Glasses
-	end
-
-	if data.lefthand_1 == -1 then
-		ClearPedProp(playerPed, 6)
-	else
-		SetPedPropIndex(playerPed, 6, data.lefthand_1, data.lefthand_2, 2) -- Left Hand Accessory
-	end
-
-	if data.righthand_1 == -1 then
-		ClearPedProp(playerPed, 7)
-	else
-		SetPedPropIndex(playerPed, 7, data.righthand_1, data.righthand_2, 2) -- Right Hand Accessory
-	end
-
-	if data.ears_1 == -1 then
-		ClearPedProp(playerPed, 2)
-	else
-		SetPedPropIndex(playerPed, 2, data.ears_1, data.ears_2, 2) -- Ear Accessory
-	end
-
-	if not Config.StandAlone then
-		ESX.SetPlayerData('loadout', oldLoadout)
-		TriggerEvent('esx:restoreLoadout')
-	end
-
-	if callback ~= nil then
+	if callback then
 		callback()
 	end
 end
@@ -1665,18 +1765,92 @@ end
 
 -- ESX Identity Integration
 if Config.EnableESXIdentityIntegration then
+	local isDead = false
+
 	function LoadIdentity(data)
-		currentIdentity = {}
+		currentIdentity = {
+			firstName = nil,
+			lastName = nil,
+			dateOfBirth = nil,
+			sex = 'm',
+			height = 67
+		}
 		for k, v in pairs(data) do
 			currentIdentity[k] = v
 		end
 	end
 
+	AddEventHandler('esx:onPlayerDeath', function(data)
+		isDead = true
+	end)
+
+	AddEventHandler('esx:onPlayerSpawn', function(spawn)
+		isDead = false
+	end)
+
 	AddEventHandler('esx_skin:resetFirstSpawn', function()
 		firstSpawn = true
 	end)
 
+	RegisterNetEvent('esx_identity:showRegisterIdentity')
+	AddEventHandler('esx_identity:showRegisterIdentity', function()
+		TriggerEvent('esx_skin:resetFirstSpawn')
+		if ESX.GetConfig().Multichar then
+			newCharacter = true
+
+			oldChar = GetDefaultCharacter(true)
+			LoadCharacter(oldChar, function()
+				local playerPed = PlayerPedId()
+				SetPedAoBlobRendering(playerPed, true)
+				SetEntityAlpha(playerPed, 255)
+			end)
+			currentIdentity = {
+				firstName = nil,
+				lastName = nil,
+				dateOfBirth = nil,
+				sex = 'm',
+				height = 67
+			}
+
+			preparingSkin = false
+		end
+		if not isDead then
+			TriggerEvent('cui_character:open', { 'identity', 'features', 'style', 'apparel' }, false)
+		end
+	end)
+
 	AddEventHandler('cui_character:setCurrentIdentity', function(data)
 		currentIdentity = data
+	end)
+
+	RegisterNUICallback('identityregister', function(data, cb)
+		ESX.TriggerServerCallback('esx_identity:registerIdentity', function(callback)
+			if callback then
+				-- ESX.ShowNotification(_U('thank_you_for_registering')) TODO: Notification (or sound effect)
+				TriggerEvent('cui_character:setCurrentIdentity', data)
+				TriggerEvent('cui_character:close', true)
+				if not ESX.GetConfig().Multichar then
+					TriggerEvent('esx_skin:playerRegistered')
+				else
+					firstCharacter = false
+					newCharacter = false
+				end
+			else
+				-- ESX.ShowNotification(_U('registration_error')) TODO: Notification (or sound effect)
+			end
+		end, data)
+	end)
+	RegisterNUICallback('identityupdate', function(data, cb)
+		ESX.TriggerServerCallback('cui_character:updateIdentity', function(callback)
+			if callback then
+				TriggerEvent('cui_character:setCurrentIdentity', data)
+				TriggerEvent('cui_character:close', true)
+				if not ESX.GetConfig().Multichar then
+					TriggerEvent('esx_skin:playerRegistered')
+				end
+			else
+				--TODO: Notification (or sound effect)
+			end
+		end, data)
 	end)
 end
