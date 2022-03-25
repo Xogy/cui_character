@@ -26,8 +26,8 @@
 
 Config = {}
 
---[[ 
-    This enables/disables the post-loading animation where camera starts in the clouds, 
+--[[
+    This enables/disables the post-loading animation where camera starts in the clouds,
     above the city like when switching characters in GTA V Story Mode.
 --]]
 Config.EnterCityAnimation = true
@@ -37,7 +37,7 @@ Config.UseNaturalHairColors = true
 Config.UseNaturalEyeColors = true
 
 -- Map Locations
-Config.EnableClothingShops = true
+Config.EnableClothingShops = false
 Config.ClothingShops = {
     vector3(72.3, -1399.1, 28.4),
     vector3(-703.8, -152.3, 36.4),
@@ -55,7 +55,7 @@ Config.ClothingShops = {
     vector3(-1108.4, 2708.9, 18.1)
 }
 
-Config.EnableBarberShops = true
+Config.EnableBarberShops = false
 Config.BarberShops = {
     vector3(-814.3, -183.8, 36.6),
     vector3(136.8, -1708.4, 28.3),
@@ -66,12 +66,12 @@ Config.BarberShops = {
     vector3(-278.1, 6228.5, 30.7)
 }
 
---[[ 
-    Hospital and City Hall coordinates are all outside, 
-    because those buildings don't have interiors by default. 
+--[[
+    Hospital and City Hall coordinates are all outside,
+    because those buildings don't have interiors by default.
     They should be replaced with proper interior coordinates.
 --]]
-Config.EnablePlasticSurgeryUnits = true
+Config.EnablePlasticSurgeryUnits = false
 Config.PlasticSurgeryUnits = {
     vector3(338.8, -1394.5, 31.5),      -- Central Los Santos Medical Center
     -- vector3(240.2, -1380.0, 33.7),   -- Los Santos General Hospital (Coroner)
@@ -119,7 +119,7 @@ Config.ExtendedMode = false
 Config.UseSteamID = false
 
 --[[
-    This is for servers without the ESX framework. 
+    This is for servers without the ESX framework.
 
     If you wish to use this for a standalone server, enable this and MAKE SURE YOU MODIFY fxmanifest.lua:
 

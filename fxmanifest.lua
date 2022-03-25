@@ -57,6 +57,6 @@ exports {
 }
 
 provide {
-    'skinchanger',
+	'skinchanger',
     'esx_skin'
 }
