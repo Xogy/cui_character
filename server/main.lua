@@ -11,7 +11,9 @@ end
 
 if not Config.StandAlone then
 	if Config.ExtendedMode then
-		TriggerEvent('esx:getSharedObject', function(obj) ESX = obj end)
+		TriggerEvent('esx:getSharedObject', function(obj)
+			ESX = obj
+		end)
 	else
 		ESX = exports['es_extended']:getSharedObject()
 	end
@@ -58,24 +60,14 @@ if not Config.StandAlone then
 		end
 	end)
 
-	RegisterServerEvent('esx_skin:save')
-	AddEventHandler('esx_skin:save', function(data)
-		charSave(data, source)
-	end)
-
-	RegisterServerEvent('cui_character:save')
-	AddEventHandler('cui_character:save', function(data)
-		charSave(data, source)
-	end)
-
-	function charSave(data, Source)
-		local xPlayer = ESX.GetPlayerFromId(Source)
+	function charSave(data, source)
+		local xPlayer = ESX.GetPlayerFromId(source)
 
 		if ESX.GetConfig().Multichar and xPlayer == nil then
-			charSkins[Source] = data
+			charSkins[source] = data
 			return
 		else
-			charSkins[Source] = nil
+			charSkins[source] = nil
 		end
 
 		MySQL.ready(function()
@@ -85,6 +77,16 @@ if not Config.StandAlone then
 			})
 		end)
 	end
+
+	RegisterServerEvent('esx_skin:save')
+	AddEventHandler('esx_skin:save', function(data)
+		charSave(data, source)
+	end)
+
+	RegisterServerEvent('cui_character:save')
+	AddEventHandler('cui_character:save', function(data)
+		charSave(data, source)
+	end)
 
 	ESX.RegisterServerCallback('esx_skin:getPlayerSkin', function(source, cb)
 		local xPlayer = ESX.GetPlayerFromId(source)
@@ -226,7 +228,6 @@ if not Config.StandAlone then
 				['@height'] = identity.height
 			})
 		end
-
 		-- end of copied identity functions
 
 		ESX.RegisterServerCallback('cui_character:updateIdentity', function(source, cb, data)
@@ -284,42 +285,27 @@ if not Config.StandAlone then
 
 	ESX.RegisterCommand('character', 'admin', function(xPlayer, args, showError)
 		xPlayer.triggerEvent('cui_character:open', { 'identity', 'features', 'style', 'apparel' })
-	end, true, {
-		help = 'Open full character editor.',
-		validate = true,
-		arguments = {}
+	end, true, { help = 'Open full character editor.', validate = true, arguments = {}
 	})
 
 	ESX.RegisterCommand('identity', 'admin', function(xPlayer, args, showError)
 		xPlayer.triggerEvent('cui_character:open', { 'identity' })
-	end, true, {
-		help = 'Open character identity editor.',
-		validate = true,
-		arguments = {}
+	end, true, { help = 'Open character identity editor.', validate = true, arguments = {}
 	})
 
 	ESX.RegisterCommand('features', 'admin', function(xPlayer, args, showError)
 		xPlayer.triggerEvent('cui_character:open', { 'features' })
-	end, true, {
-		help = 'Open character physical features editor.',
-		validate = true,
-		arguments = {}
+	end, true, { help = 'Open character physical features editor.', validate = true, arguments = {}
 	})
 
 	ESX.RegisterCommand('style', 'admin', function(xPlayer, args, showError)
 		xPlayer.triggerEvent('cui_character:open', { 'style' })
-	end, true, {
-		help = 'Open character style editor.',
-		validate = true,
-		arguments = {}
+	end, true, { help = 'Open character style editor.', validate = true, arguments = {}
 	})
 
 	ESX.RegisterCommand('apparel', 'admin', function(xPlayer, args, showError)
 		xPlayer.triggerEvent('cui_character:open', { 'apparel' })
-	end, true, {
-		help = 'Open character apparel editor.',
-		validate = true,
-		arguments = {}
+	end, true, { help = 'Open character apparel editor.', validate = true, arguments = {}
 	})
 
 	-- Standalone Deployment
@@ -327,7 +313,8 @@ else
 	-- Create the database table if it does not exist
 	MySQL.ready(function()
 		MySQL.Async.execute('CREATE TABLE IF NOT EXISTS `player_skins` (`id` int(11) NOT NULL auto_increment, `identifier` varchar(128) NOT NULL, `skin` LONGTEXT NULL DEFAULT NULL, PRIMARY KEY  (`id`), UNIQUE(`identifier`))', {},
-			function() end)
+			function()
+			end)
 	end)
 
 	RegisterServerEvent('cui_character:save')
@@ -389,4 +376,5 @@ else
 			TriggerClientEvent('cui_character:open', source, { 'apparel' })
 		end
 	end, true)
+
 end
